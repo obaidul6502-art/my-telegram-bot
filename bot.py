@@ -11,15 +11,17 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Dummy Flask App to keep Render service active
-app = Flask('')
+# Keep-Alive Flask App
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is alive and running!"
 
 def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    # Render environmental PORT support (Defaults to 10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run_flask)
@@ -56,7 +58,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text="ℹ️ Send /start to reload the main menu.")
 
 def main():
-    # Start Keep-Alive Web Server
+    # Start Keep-Alive Server
     keep_alive()
 
     # Telegram Bot Application
