@@ -1,7 +1,6 @@
 import os
 import logging
-from threading import Thread
-from flask import Flask
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -11,25 +10,12 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Keep-Alive Flask App
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is alive and running!"
-
-def run_flask():
-    # Render environmental PORT support (Defaults to 10000)
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-
 # Bot Token
 TOKEN = os.getenv("BOT_TOKEN", "8649527037:AAFtL9CpErLfbGT8J3xxo831CJjIEOxWMTM")
+
+# Simple Async Web Server Handler
+async def handle_ping(request):
+    return web.Response(text="Bot is alive and running!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -57,17 +43,24 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'help':
         await query.edit_message_text(text="ℹ️ Send /start to reload the main menu.")
 
-def main():
-    # Start Keep-Alive Server
-    keep_alive()
+async def post_init(application: Application):
+    # Web App Server Initialization for Render
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"Keep-Alive Web Server started on port {port}")
 
-    # Telegram Bot Application
-    bot_app = Application.builder().token(TOKEN).build()
+def main():
+    bot_app = Application.builder().token(TOKEN).post_init(post_init).build()
     
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CallbackQueryHandler(button_click))
 
-    print("Bot with Keep-Alive Web Server is running...")
+    print("Bot with Async Keep-Alive Web Server is starting...")
     bot_app.run_polling()
 
 if __name__ == '__main__':
