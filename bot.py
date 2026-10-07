@@ -1,5 +1,7 @@
 import os
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -10,9 +12,21 @@ logging.basicConfig(
 )
 
 TOKEN = os.getenv("BOT_TOKEN", "8649527037:AAFtL9CpErLfbGT8J3xxo831CJjIEOxWMTM")
-# Render-এর নিজস্ব External URL
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://my-telegram-bot-a2t1.onrender.com")
 
+# 1. Dummy HTTP Server for Render Port Binding (Free Tier compatible)
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running successfully!")
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    logging.info(f"HTTP Server started on port {port}")
+    server.serve_forever()
+
+# 2. Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("👤 Profile", callback_data='profile')],
@@ -36,19 +50,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text="ℹ️ Send /start to reload the main menu.")
 
 def main():
-    port = int(os.environ.get("PORT", 10000))
-    app = ApplicationBuilder().token(TOKEN).build()
+    # Start HTTP server in a separate background thread so it satisfies Render's port check
+    server_thread = threading.Thread(target=run_http_server, daemon=True)
+    server_thread.start()
 
+    # Start Telegram Bot polling normally
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_click))
 
-    # Native Webhook Server for Render
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=TOKEN,
-        webhook_url=f"{RENDER_EXTERNAL_URL}/{TOKEN}"
-    )
+    logging.info("Starting Telegram bot polling...")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
