@@ -1,32 +1,21 @@
 import os
 import logging
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import asyncio
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Logging setup
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN", "8649527037:AAFtL9CpErLfbGT8J3xxo831CJjIEOxWMTM")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://my-telegram-bot-a2t1.onrender.com")
 
-# 1. Dummy HTTP Server for Render Port Binding (Free Tier compatible)
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running successfully!")
+# 1. Flask App (gunicorn eta kei খুঁজছে)
+app = Flask(__name__)
 
-def run_http_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    logging.info(f"HTTP Server started on port {port}")
-    server.serve_forever()
+# 2. Telegram Application
+bot_app = ApplicationBuilder().token(TOKEN).build()
 
-# 2. Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("👤 Profile", callback_data='profile')],
@@ -49,18 +38,28 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'help':
         await query.edit_message_text(text="ℹ️ Send /start to reload the main menu.")
 
-def main():
-    # Start HTTP server in a separate background thread so it satisfies Render's port check
-    server_thread = threading.Thread(target=run_http_server, daemon=True)
-    server_thread.start()
+bot_app.add_handler(CommandHandler("start", start))
+bot_app.add_handler(CallbackQueryHandler(button_click))
 
-    # Start Telegram Bot polling normally
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_click))
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot is alive!", 200
 
-    logging.info("Starting Telegram bot polling...")
-    app.run_polling(drop_pending_updates=True)
+@app.route(f"/{TOKEN}", methods=["POST"])
+async def webhook():
+    update = Update.de_json(request.get_json(force=True), bot_app.bot)
+    await bot_app.process_update(update)
+    return "OK", 200
 
-if __name__ == '__main__':
-    main()
+# Set Webhook loop
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+async def setup_webhook():
+    await bot_app.initialize()
+    await bot_app.bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
+
+loop.run_until_complete(setup_webhook())
