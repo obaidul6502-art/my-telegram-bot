@@ -2,22 +2,24 @@ import os
 from telegram import Update, BotCommand, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Railway Environment থেকে BOT_TOKEN গ্রহণ
+# Token variable
 TOKEN = os.environ.get("BOT_TOKEN")
 
-# বট চালু হওয়ার সাথে সাথে চ্যাট বক্সে Menu Button সেট করার ফাংশন
+# Chat box-er pashiyo Menu button set korar jonno
 async def post_init(application):
     commands = [
-        BotCommand("start", "🔄 বট পুনরায় চালু করুন / মেনু দেখুন")
+        BotCommand("start", "🔄 Restart Bot / Show Menu")
     ]
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Welcome Message
     welcome_text = (
-        "👋 **আমাদের বটে আপনাকে স্বাগতম!**\n\n"
-        "🚀 নিচের মেনু থেকে আপনার প্রয়োজনীয় অপশনটি নির্বাচন করুন:"
+        "👋 **Welcome to My-First-Test-Bot!**\n\n"
+        "🚀 Please select an option from the menu below:"
     )
     
+    # Keyboard Buttons
     keyboard = [
         ["🛒 Buy number", "💰 Deposit"],
         ["👤 Profile", "💸 Withdraw"]
@@ -28,16 +30,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TOKEN:
-        print("Error: BOT_TOKEN পাওয়া যায়নি!")
+        print("Error: BOT_TOKEN not found!")
         return
 
-    # post_init যুক্ত করে Application তৈরি
+    # Application Build
     application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
-    # /start কমান্ড হ্যান্ডলার যোগ করা
+    # Handlers
     application.add_handler(CommandHandler("start", start))
 
-    # পোলিং চালু করা
+    # Run polling
     application.run_polling()
 
 if __name__ == "__main__":
