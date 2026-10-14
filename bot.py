@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = "8649527037:AAFPJRCau5uy2eAV5T4-UFpxx_LrFf3wFkg"
 
-# ⚠️ এখানে আপনার নিজের Telegram User ID বসান (যেটি দিয়ে আপনি স্টক এড করবেন)
+# ⚠️ Ekhane @userinfobot theke pawa apnar nijer Telegram User ID ti boshan
 ADMIN_ID = 6132325140  
 
 # --- DATABASE SETUP ---
@@ -59,16 +59,15 @@ def update_balance(user_id, amount):
     conn.commit()
     conn.close()
 
-# --- ADMIN COMMANDS TO ADD STOCK ---
+# --- ADMIN COMMANDS ---
+
+# 1. Single Item Add (/add number 1.5 +8801700000000)
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         await update.message.reply_text("⛔ Apni admin non!")
         return
 
-    # Usage: /add item_type price data
-    # Example: /add number 1.5 +8801700000000
-    # Example: /add email 0.5 test@gmail.com:pass123
     try:
         args = context.args
         item_type = args[0].lower() # 'number' or 'email'
@@ -83,19 +82,74 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ Successfully added {item_type} to stock!\n\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text("❌ Command Format:\n`/add number price item_data`\nExample: `/add number 1.5 +8801711122233`\n`/add email 0.5 myemail@gmail.com:pass123`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Command Format:\n`/add number price item_data`\nExample: `/add number 1.5 +8801711122233`", parse_mode="Markdown")
 
-# Add balance to user manually by Admin
+# 2. Bulk Add via .txt File (Caption: /addfile number 1.5)
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+
+    document = update.message.document
+    if not document.file_name.endswith('.txt'):
+        await update.message.reply_text("❌ Shudhu .txt file upload karun!")
+        return
+
+    caption = update.message.caption
+    if not caption or not caption.startswith("/addfile"):
+        await update.message.reply_text(
+            "⚠️ File-er sathe Caption-e price o item_type likhun!\n\n"
+            "Format: `/addfile number 1.5` ba `/addfile email 0.5`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        args = caption.split()
+        item_type = args[1].lower()  # 'number' or 'email'
+        price = float(args[2])
+
+        # Download file content
+        file = await context.bot.get_file(document.file_id)
+        file_bytes = await file.download_as_bytearray()
+        content = file_bytes.decode('utf-8')
+
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+
+        stock_data = [(item_type, line, price) for line in lines]
+        cursor.executemany("INSERT INTO stock (item_type, item_data, price) VALUES (?, ?, ?)", stock_data)
+
+        conn.commit()
+        conn.close()
+
+        await update.message.reply_text(
+            f"🎉 **Bulk Import Successful!**\n\n"
+            f"📦 Type: `{item_type}`\n"
+            f"💵 Price per item: `${price}`\n"
+            f"🔢 Total Items Added: `{len(lines)}`",
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error importing file: {str(e)}")
+
+# 3. Add Balance Manually (/addbal USER_ID AMOUNT)
 async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
         return
     try:
         target_user_id = int(context.args[0])
         amount = float(context.args[1])
         update_balance(target_user_id, amount)
-        await update.message.reply_text(f"✅ Added ${amount} balance to User ID: `{target_user_id}`", parse_mode="Markdown")
-    except:
-        await update.message.reply_text("❌ Format: `/addbal user_id amount`", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Successfully added ${amount} balance to User ID: `{target_user_id}`", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text("❌ Format: `/addbal USER_ID AMOUNT`\nExample: `/addbal 6132325140 50`", parse_mode="Markdown")
 
 # --- MENU BUTTON SETUP ---
 async def post_init(application):
@@ -199,10 +253,11 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("add", add_stock))
     application.add_handler(CommandHandler("addbal", add_bal))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot running with Stock Management...")
+    print("Bot running with Stock & Bulk Import...")
     application.run_polling()
 
 if __name__ == "__main__":
