@@ -4,23 +4,33 @@ import logging
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# Logging setup (Security & Error tracking-er jonno)
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Bot Token
 TOKEN = "8649527037:AAFPJRCau5uy2eAV5T4-UFpxx_LrFf3wFkg"
 
-# --- STEP 1: DATABASE SETUP (SQLite) ---
+# ⚠️ এখানে আপনার নিজের Telegram User ID বসান (যেটি দিয়ে আপনি স্টক এড করবেন)
+ADMIN_ID = 6132325140  
+
+# --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect("bot_database.db")
     cursor = conn.cursor()
-    # Users table to store balance & info
+    # User balance table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             balance REAL DEFAULT 0.0
+        )
+    """)
+    # Stock table (for numbers and emails)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_type TEXT, -- 'number' or 'email'
+            item_data TEXT, -- Number or Email detail
+            price REAL
         )
     """)
     conn.commit()
@@ -49,6 +59,44 @@ def update_balance(user_id, amount):
     conn.commit()
     conn.close()
 
+# --- ADMIN COMMANDS TO ADD STOCK ---
+async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+
+    # Usage: /add item_type price data
+    # Example: /add number 1.5 +8801700000000
+    # Example: /add email 0.5 test@gmail.com:pass123
+    try:
+        args = context.args
+        item_type = args[0].lower() # 'number' or 'email'
+        price = float(args[1])
+        item_data = " ".join(args[2:])
+
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES (?, ?, ?)", (item_type, item_data, price))
+        conn.commit()
+        conn.close()
+
+        await update.message.reply_text(f"✅ Successfully added {item_type} to stock!\n\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text("❌ Command Format:\n`/add number price item_data`\nExample: `/add number 1.5 +8801711122233`\n`/add email 0.5 myemail@gmail.com:pass123`", parse_mode="Markdown")
+
+# Add balance to user manually by Admin
+async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        target_user_id = int(context.args[0])
+        amount = float(context.args[1])
+        update_balance(target_user_id, amount)
+        await update.message.reply_text(f"✅ Added ${amount} balance to User ID: `{target_user_id}`", parse_mode="Markdown")
+    except:
+        await update.message.reply_text("❌ Format: `/addbal user_id amount`", parse_mode="Markdown")
+
 # --- MENU BUTTON SETUP ---
 async def post_init(application):
     commands = [
@@ -56,25 +104,25 @@ async def post_init(application):
     ]
     await application.bot.set_my_commands(commands)
 
-# --- START COMMAND ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     get_user(user.id, user.username)
 
     welcome_text = (
         f"👋 **Welcome, {user.first_name}!**\n\n"
-        "🚀 Amar ei Marketplace bot-e apnake shagotom. Nicher menu theke apnar proyojonio option select karun:"
+        "🚀 Nicher menu theke apnar proyojonio option select karun:"
     )
     
     keyboard = [
-        ["🛒 Buy number", "💰 Deposit"],
-        ["👤 Profile", "💸 Withdraw"]
+        ["🛒 Buy number", "📧 Buy email"],
+        ["💰 Deposit", "👤 Profile"],
+        ["💸 Withdraw"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# --- BUTTON HANDLERS ---
+# --- USER BUY & MENU HANDLER ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user = update.effective_user
@@ -90,46 +138,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(profile_text, parse_mode="Markdown")
 
     elif text == "💰 Deposit":
-        # --- STEP 2: PAYMENT GATEWAY (Inline Buttons for bKash/Crypto) ---
         keyboard = [
-            [InlineKeyboardButton("bkash (Manual/Auto)", callback_data="pay_bkash")],
+            [InlineKeyboardButton("bkash (Manual)", callback_data="pay_bkash")],
             [InlineKeyboardButton("Crypto (USDT/TRC20)", callback_data="pay_crypto")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("💳 Please select a payment method to deposit funds:", reply_markup=reply_markup)
+        await update.message.reply_text("💳 Please select a payment method:", reply_markup=reply_markup)
 
-    elif text == "🛒 Buy number":
-        await update.message.reply_text("🛒 Current stock is empty. Please deposit first!")
+    elif text in ["🛒 Buy number", "📧 Buy email"]:
+        item_type = "number" if text == "🛒 Buy number" else "email"
+        
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = ? LIMIT 1", (item_type,))
+        stock_item = cursor.fetchone()
+        
+        if not stock_item:
+            await update.message.reply_text(f"❌ Current {item_type} stock is empty! Please try again later.")
+            conn.close()
+            return
+
+        stock_id, item_data, price = stock_item
+        user_balance = get_user(user.id, user.username)
+
+        if user_balance < price:
+            await update.message.reply_text(f"⚠️ Insufficient balance! Price: ${price}, Your Balance:${user_balance:.2f}\nPlease deposit first.")
+            conn.close()
+            return
+
+        # Deduct balance & delete item from stock
+        update_balance(user.id, -price)
+        cursor.execute("DELETE FROM stock WHERE id = ?", (stock_id,))
+        conn.commit()
+        conn.close()
+
+        success_msg = (
+            f"🎉 **Purchase Successful!**\n\n"
+            f"📦 Type: {item_type.upper()}\n"
+            f"💵 Price: ${price}\n"
+            f"🔑 Details: `{item_data}`"
+        )
+        await update.message.reply_text(success_msg, parse_mode="Markdown")
 
     elif text == "💸 Withdraw":
         await update.message.reply_text("💸 Apnar balance-e porjapto fund nei.")
 
-# --- PAYMENT CALLBACK HANDLER ---
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "pay_bkash":
-        await query.edit_message_text("📲 bKash Merchant/Personal No: `01XXXXXXXXX`\nSend money kore Transaction ID (TrxID) admin-ke pathan.")
+        await query.edit_message_text(f"📲 bKash Personal No: `017XXXXXXXX`\nSend money kore Transaction ID & User ID (`{query.from_user.id}`) Admin-ke pathan.")
     elif query.data == "pay_crypto":
-        await query.edit_message_text("🪙 USDT (TRC20) Wallet Address:\n`TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`\nSend kore hash pathan.")
-
-# --- ERROR HANDLER (STEP 3: SECURITY) ---
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+        await query.edit_message_text(f"🪙 USDT (TRC20) Wallet:\n`TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`\nPayment complete kore Admin-ke User ID (`{query.from_user.id}`) pathan.")
 
 def main():
     application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     # Handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("add", add_stock))
+    application.add_handler(CommandHandler("addbal", add_bal))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    # Error logging
-    application.add_error_handler(error_handler)
-
-    print("Bot is running smoothly...")
+    print("Bot running with Stock Management...")
     application.run_polling()
 
 if __name__ == "__main__":
