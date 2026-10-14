@@ -3,7 +3,7 @@ from telegram import Update, BotCommand, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # Token variable
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = os.environ.get("8649527037:AAFPJRCau5uy2eAV5T4-UFpxx_LrFf3wFkg")
 
 # Chat box-er pashiyo Menu button set korar jonno
 async def post_init(application):
